@@ -4,6 +4,18 @@ Same sentences, same sampler params, same model (Llama-OuteTTS-1.0-1B).
 
 No dependency on tts.py or any other project file.
 
+NOTE — Decision record:
+This benchmark was run to choose between two OuteTTS backends.
+llama.cpp Q8_0 won on RTF (~3.1x vs ~3.7x for mlx-audio BF16).
+
+However, OuteTTS was subsequently replaced by Kokoro-82M as the
+production TTS for this pipeline. Reason: OuteTTS produced distorted
+or broken audio ~50% of the time on M3 Pro (stochastic sampling
+instability). Kokoro is deterministic, RTF 0.19–0.21x, and produces
+consistently clean French output with the ff_siwis voice.
+
+This file is kept as a record of the OuteTTS evaluation.
+
 Usage:
     python bench_mlx.py
     python bench_mlx.py --no-play

@@ -133,6 +133,17 @@ Cold start (first run): +3–5s for Ollama model load.
 
 ---
 
+## Decision Log
+
+| Decision | Rejected | Chosen | Reason |
+|----------|----------|--------|--------|
+| TTS engine | OuteTTS (llama.cpp Q8_0) | **Kokoro-82M** | OuteTTS produced distorted audio ~50% of the time on M3 Pro — stochastic sampling instability. Kokoro is deterministic, RTF 0.19–0.21x, clean French output. |
+| OuteTTS backend | mlx-audio BF16 (RTF 3.7x) | llama.cpp Q8_0 (RTF 3.1x) | Benchmarked in `bench_mlx.py` — llama.cpp faster, but both superseded by Kokoro. |
+| LM size | Qwen3.5:2b | **Qwen3.5:4b** | 2b hallucinated facts and ignored language rules. 4b stable with no observable latency regression. |
+| LM API | `/api/generate` | **`/api/chat`** | `/api/generate` is stateless. `/api/chat` supports conversation history natively. |
+
+---
+
 ## Roadmap
 
 - [x] Phase 1 — TTS standalone (Kokoro-82M)
