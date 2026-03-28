@@ -25,8 +25,9 @@ import tools as _tools
 
 OLLAMA_URL      = "http://localhost:11434/api/generate"
 OLLAMA_CHAT_URL = "http://localhost:11434/api/chat"
-MODEL           = "qwen3.5:4b"
-AVAILABLE_MODELS = ["qwen3.5:2b", "qwen3.5:4b", "qwen3.5:9b"]
+MODEL             = "qwen3.5:4b"
+AVAILABLE_MODELS  = ["qwen3.5:2b", "qwen3.5:4b", "qwen3.5:9b"]
+THINK_MAX_TOKENS  = 600   # cap total tokens (think + response) in think=ON mode
 
 _SYSTEM_PROMPT_TEMPLATE = """\
 You are a fully local voice assistant running on a Mac.
@@ -146,6 +147,7 @@ def ask(raw_text: str, log, history: list[dict] | None = None, model: str = MODE
                     "tools":    _tools.DEFINITIONS,
                     "stream":   True,
                     "think":    think,
+                    **({"options": {"num_predict": THINK_MAX_TOKENS}} if think else {}),
                 }) as resp:
                     log.debug(f"HTTP {resp.status_code}")
                     resp.raise_for_status()
@@ -196,6 +198,7 @@ def ask(raw_text: str, log, history: list[dict] | None = None, model: str = MODE
                         "messages": messages + tool_messages,
                         "stream":   True,
                         "think":    think,
+                        **({"options": {"num_predict": THINK_MAX_TOKENS}} if think else {}),
                     }) as resp2:
                         resp2.raise_for_status()
                         for line in resp2.iter_lines():
