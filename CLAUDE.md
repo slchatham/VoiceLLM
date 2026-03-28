@@ -138,18 +138,25 @@ Each block is developed and validated in isolation before integration.
 - Load all three models at startup, not on demand — cold load latency is unacceptable mid-conversation.
 - Conversation history: 5-turn sliding window, resets after 300s of silence.
 - Test each phase independently with `--test` flag before full pipeline run.
+- **Ctrl+C exit**: use `os._exit(0)` instead of `break` in the main loop — NeMo/MPS tensors crash during Python destructor teardown on macOS. `os._exit(0)` skips destructors entirely.
+- **Tool calling**: `lm.py ask()` passes `tools.DEFINITIONS` on every `/api/chat` call. If `message.tool_calls` is present in the stream, tools are executed and a second streaming call is made. Tool internals (calls + results) are NOT added to the sliding history — only the final user/assistant exchange.
+- **web_search is unreliable for real-time weather** — DDG returns news snippets, not live data. Abstain or add a dedicated weather API tool.
+- **European stock tickers** need a market suffix: `AXA.PA`, `MC.PA` (Euronext Paris), `SAP.DE` (Xetra). The LM knows the major ones but may miss smaller caps.
 
 ---
 
 ## 8. Stack & Dependencies
 
 ```
-kokoro           # TTS — Kokoro-82M, French voice ff_siwis
-soundfile        # WAV I/O for Kokoro output
-ollama (httpx)   # LM serving (Qwen3.5:4b) — direct HTTP via httpx
-nemo_toolkit     # STT (Parakeet TDT 0.6B-v3)
-sounddevice      # mic capture
-numpy            # audio buffers
+kokoro                # TTS — Kokoro-82M, French voice ff_siwis
+soundfile             # WAV I/O for Kokoro output
+ollama (httpx)        # LM serving (Qwen3.5:4b) — direct HTTP via httpx
+nemo_toolkit          # STT (Parakeet TDT 0.6B-v3)
+sounddevice           # mic capture
+numpy                 # audio buffers
+duckduckgo-search     # web_search tool (no API key)
+wikipedia             # wikipedia_lookup tool (no API key)
+yfinance              # get_stock_price tool (no API key)
 ```
 
 ```bash

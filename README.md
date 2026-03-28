@@ -53,7 +53,8 @@ flowchart TD
 - 🗣 **Dynamic TTS voice routing** — `ff_siwis` for French responses, `af_heart` for English, detected automatically from LM output using a shared Kokoro model (weights loaded once)
 - 🧠 **Conversation context** — 5-turn sliding window, auto-reset after 5 minutes
 - ⚡ **Fast** — all models loaded once at startup, kept in memory
-- 🌐 **Web grounding** — LM triggers DuckDuckGo / Wikipedia tool calls autonomously when needed; +3–4s overhead, zero manual trigger
+- 🌐 **Web grounding** — LM triggers DuckDuckGo / Wikipedia / yfinance tool calls autonomously when needed; +3–4s overhead, zero manual trigger
+- 📈 **Stock prices** — `get_stock_price(ticker, period)` via yfinance; real OHLCV data for 1d / 7d / 1mo / 3mo; LM resolves company → ticker (NVDA, MC.PA, etc.)
 - 🔒 **Fully offline by default** — tool calls are the only optional network path
 - 📋 **Timestamped logs** — every run logged to `logs/`
 - 🎛 **Selectable LM** — `--model qwen3.5:4b` (default) · `9b` (slower, higher quality) · `2b` (experimental, fast but hallucinates with tools)
@@ -78,7 +79,7 @@ cd VoiceLLM
 # Dependencies
 pip install kokoro soundfile sounddevice httpx
 pip install nemo_toolkit[asr]
-pip install duckduckgo-search wikipedia   # Phase 4 — web grounding
+pip install duckduckgo-search wikipedia yfinance   # Phase 4 — web grounding + stock prices
 
 # Pull LM (4b — default)
 ollama pull qwen3.5:4b
@@ -175,6 +176,8 @@ Cold start (first run): +3–5s for Ollama model load.
 | Default LM size | 9b | **4b** | 9b causes STT degradation (RTF 1.0x vs 0.1x) and 10–25s round-trips due to memory pressure. 4b hits the sweet spot at ~5s. |
 | Web grounding approach | prompt-flag `[SEARCH: ...]` | **Ollama tool calling** | Native function calling is cleaner — model decides autonomously, no regex parsing, no manual trigger heuristic. |
 | 2b + tools viability | qwen3.5:2b with tools | **4b (default)** | 2b calls tools correctly but fails to synthesize results — hallucinates on top of correct search results. Fast (~1.4s LM) but unreliable. Left available as `--model qwen3.5:2b`. |
+| Stock price tool | DuckDuckGo snippets | **yfinance** | DDG returns stale financial news snippets with inconsistent numbers. yfinance gives real OHLCV data with accurate % change over any period. |
+| Ctrl+C exit crash | `break` → Python cleanup | **`os._exit(0)`** | NeMo/MPS tensors crash during Python destructor teardown on macOS. `os._exit(0)` skips destructors entirely — clean exit, no bus error. |
 
 ---
 
@@ -185,8 +188,8 @@ Cold start (first run): +3–5s for Ollama model load.
 - [x] Phase 3 — STT integration (Parakeet TDT 0.6B-v3)
 - [x] Phase 3.5 — Dynamic FR/EN TTS routing (shared KModel)
 - [x] Phase 3.6 — Selectable LM (`--model qwen3.5:2b|4b|9b`)
-- [x] Phase 4 — Web grounding (DuckDuckGo + Wikipedia via Ollama tool calling)
-- [ ] Phase 5 — Streaming TTS (pipe LM tokens → TTS as they arrive, reduce perceived latency)
+- [x] Phase 4 — Web grounding (DuckDuckGo + Wikipedia + yfinance via Ollama tool calling)
+- [ ] Phase 5 — Dedicated weather tool (OpenWeatherMap or equivalent — DDG unreliable for real-time weather)
 
 ---
 
