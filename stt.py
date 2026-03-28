@@ -151,7 +151,7 @@ def _await_enter() -> None:
 def record_push_to_talk(log) -> np.ndarray:
     """Record mic audio. Press Enter to start, Enter to stop."""
     print("\033[92m╔══════════════════════════════════════╗\033[0m", flush=True)
-    print("\033[92m║   🎙  APPUYEZ SUR ENTRÉE POUR PARLER  ║\033[0m", flush=True)
+    print("\033[92m║        🎙  PRESS ENTER TO TALK        ║\033[0m", flush=True)
     print("\033[92m╚══════════════════════════════════════╝\033[0m", flush=True)
     _await_enter()
 
@@ -167,7 +167,7 @@ def record_push_to_talk(log) -> np.ndarray:
     )
     stream.start()
     print("\033[91m╔══════════════════════════════════════╗\033[0m", flush=True)
-    print("\033[91m║   ⏹  ENTRÉE POUR ARRÊTER             ║\033[0m", flush=True)
+    print("\033[91m║        ⏹  PRESS ENTER TO STOP         ║\033[0m", flush=True)
     print("\033[91m╚══════════════════════════════════════╝\033[0m", flush=True)
     t0 = time.perf_counter()
     try:
@@ -181,7 +181,7 @@ def record_push_to_talk(log) -> np.ndarray:
     keep_going[0] = False
     stream.stop()
     stream.close()
-    print("\033[93m⏳  Traitement en cours…\033[0m", flush=True)
+    print("\033[93m⏳  Processing…\033[0m", flush=True)
 
     elapsed = time.perf_counter() - t0
     audio   = np.concatenate(frames) if frames else np.array([], dtype=np.float32)

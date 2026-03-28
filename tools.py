@@ -167,7 +167,7 @@ def _web_search(query: str, log) -> str:
         if not results:
             return "No search results found."
         snippets = [f"{r['title']} [{r['href']}]: {r['body']}" for r in results]
-        disclaimer = "[Sources web — peuvent contenir des hoax ou informations non vérifiées. Rester critique.]\n\n"
+        disclaimer = "[Web results — may contain hoaxes or unverified information. Stay critical.]\n\n"
         return (disclaimer + "\n\n".join(snippets))[:2200]
     except Exception as exc:
         log.warning(f"web_search error: {exc}")

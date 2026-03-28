@@ -129,7 +129,7 @@ push-to-talk:
     _R = "\033[0m"
     def _row(s): return f"{_B}║{s:^{_W}}║{_R}"
     print(f"{_B}╔{'═'*_W}╗{_R}")
-    print(_row("V O I C E L L M   P I P E L I N E"))
+    print(_row("  V O I C E L L M   P I P E L I N E  "))
     _think_label = "  [think=ON]" if args.think else ""
     print(_row(f"Parakeet 0.6B · {args.model} · Kokoro-82M"))
     if args.think:
@@ -141,10 +141,10 @@ push-to-talk:
     # ── Load models ──────────────────────────────────────────────────────────
     log.info("=== VoiceLLM startup ===")
 
-    log.info("[1/2] loading Parakeet TDT 0.6B-v3 …")
+    log.info("[1/2] loading Parakeet TDT 0.6B-v3...")
     stt_model = load_parakeet(log)
 
-    log.info("[2/2] loading Kokoro-82M (FR + EN, shared weights) …")
+    log.info("[2/2] loading Kokoro-82M (FR + EN, shared weights)...")
     from kokoro import KPipeline, KModel
     _kmodel = KModel()
     pipelines = {
@@ -154,7 +154,7 @@ push-to-talk:
     log.info("all models loaded — ready")
 
     # ── Push-to-talk loop ─────────────────────────────────────────────────────
-    print("\nVoiceLLM ready. Ctrl+C to quit.\n")
+    print("\nReady. Ctrl+C to quit.\n")
 
     history         = []
     last_turn_time  = None
@@ -208,11 +208,11 @@ push-to-talk:
 
         except KeyboardInterrupt:
             log.info("interrupted — bye")
-            print("\nBye.")
+            print("\nBye.\n")
             os._exit(0)  # skip MPS/NeMo destructor — avoids bus error on macOS
         except Exception as exc:
             log.error(f"turn failed: {type(exc).__name__}: {exc}")
-            print("\033[91m⚠  Erreur — nouvelle tentative possible.\033[0m", flush=True)
+            print("\033[91m⚠  Error — retry possible.\033[0m", flush=True)
 
 
 if __name__ == "__main__":
