@@ -40,6 +40,33 @@ DEFINITIONS = [
     {
         "type": "function",
         "function": {
+            "name": "get_stock_price",
+            "description": (
+                "Get the stock price and performance for a ticker symbol over a given period. "
+                "Use for questions about share prices, stock trends, or market performance. "
+                "Pass the standard ticker symbol directly (e.g. NVDA, AAPL, TSLA, MC.PA for LVMH). "
+                "period: '1d' = today vs yesterday, '7d' = last 7 days, '1mo' = last month, '3mo' = last quarter."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ticker": {
+                        "type": "string",
+                        "description": "Stock ticker symbol, e.g. NVDA, AAPL, MC.PA"
+                    },
+                    "period": {
+                        "type": "string",
+                        "enum": ["1d", "7d", "1mo", "3mo"],
+                        "description": "Time period for the price history"
+                    }
+                },
+                "required": ["ticker", "period"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "wikipedia_lookup",
             "description": (
                 "Look up encyclopedic or background information about a topic, person, "
@@ -75,9 +102,42 @@ def execute(name: str, arguments: dict | str, log) -> str:
 
     if name == "web_search":
         return _web_search(arguments.get("query", ""), log)
+    if name == "get_stock_price":
+        return _get_stock_price(arguments.get("ticker", ""), arguments.get("period", "7d"), log)
     if name == "wikipedia_lookup":
         return _wikipedia_lookup(arguments.get("query", ""), log)
     return f"[unknown tool: {name}]"
+
+
+def _get_stock_price(ticker: str, period: str, log) -> str:
+    log.info(f"[tool] get_stock_price({ticker!r}, {period!r})")
+    try:
+        import yfinance as yf
+
+        # yfinance period/interval mapping
+        _interval = {"1d": "5m", "7d": "1d", "1mo": "1d", "3mo": "1d"}.get(period, "1d")
+        hist = yf.Ticker(ticker).history(period=period, interval=_interval)
+
+        if hist.empty:
+            return f"No data found for ticker '{ticker}'. Check the symbol (e.g. NVDA, MC.PA)."
+
+        current  = hist["Close"].iloc[-1]
+        start    = hist["Close"].iloc[0]
+        high     = hist["High"].max()
+        low      = hist["Low"].min()
+        change   = current - start
+        pct      = (change / start) * 100
+        date     = hist.index[-1].strftime("%Y-%m-%d")
+        sign     = "+" if change >= 0 else ""
+
+        return (
+            f"{ticker} — {period}: ${current:.2f} (as of {date})\n"
+            f"Change: {sign}{change:.2f} USD ({sign}{pct:.1f}%)\n"
+            f"High: ${high:.2f} | Low: ${low:.2f}"
+        )
+    except Exception as exc:
+        log.warning(f"get_stock_price error: {exc}")
+        return f"Stock data unavailable for '{ticker}': {exc}"
 
 
 def _web_search(query: str, log) -> str:
