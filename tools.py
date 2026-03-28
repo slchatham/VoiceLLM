@@ -45,7 +45,7 @@ DEFINITIONS = [
                 "Get the stock price and performance for a ticker symbol over a given period. "
                 "Use for questions about share prices, stock trends, or market performance. "
                 "Pass the standard ticker symbol directly (e.g. NVDA, AAPL, TSLA, MC.PA for LVMH). "
-                "period: '1d' = today vs yesterday, '7d' = last 7 days, '1mo' = last month, '3mo' = last quarter."
+                "period: '1d' = today vs yesterday, '7d' = last 7 days, '1mo' = last month, '3mo' = last quarter, '1y' = last 12 months."
             ),
             "parameters": {
                 "type": "object",
@@ -56,7 +56,7 @@ DEFINITIONS = [
                     },
                     "period": {
                         "type": "string",
-                        "enum": ["1d", "7d", "1mo", "3mo"],
+                        "enum": ["1d", "7d", "1mo", "3mo", "1y"],
                         "description": "Time period for the price history"
                     }
                 },
@@ -125,7 +125,7 @@ def _get_stock_price(ticker: str, period: str, log) -> str:
         import yfinance as yf
 
         # yfinance period/interval mapping
-        _interval = {"1d": "5m", "7d": "1d", "1mo": "1d", "3mo": "1d"}.get(period, "1d")
+        _interval = {"1d": "5m", "7d": "1d", "1mo": "1d", "3mo": "1d", "1y": "1wk"}.get(period, "1d")
         hist = yf.Ticker(ticker).history(period=period, interval=_interval)
 
         if hist.empty:
