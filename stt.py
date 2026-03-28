@@ -125,7 +125,10 @@ def record_push_to_talk(log) -> np.ndarray:
     print("\033[92m╔══════════════════════════════════════╗\033[0m", flush=True)
     print("\033[92m║   🎙  APPUYEZ SUR ENTRÉE POUR PARLER  ║\033[0m", flush=True)
     print("\033[92m╚══════════════════════════════════════╝\033[0m", flush=True)
-    input()
+    try:
+        input()
+    except KeyboardInterrupt:
+        raise
 
     frames     = []
     keep_going = [True]
@@ -142,10 +145,18 @@ def record_push_to_talk(log) -> np.ndarray:
     print("\033[91m║   ⏹  ENTRÉE POUR ARRÊTER             ║\033[0m", flush=True)
     print("\033[91m╚══════════════════════════════════════╝\033[0m", flush=True)
     t0 = time.perf_counter()
-    input()
+    try:
+        input()
+    except KeyboardInterrupt:
+        keep_going[0] = False
+        stream.stop()
+        stream.close()
+        raise
+
     keep_going[0] = False
     stream.stop()
     stream.close()
+    print("\033[93m⏳  Traitement en cours…\033[0m", flush=True)
 
     elapsed = time.perf_counter() - t0
     audio   = np.concatenate(frames) if frames else np.array([], dtype=np.float32)

@@ -29,16 +29,54 @@ SAMPLE_RATE      = 24000   # Kokoro output
 CONTEXT_TIMEOUT  = 300     # seconds of silence before history reset
 MAX_TURNS        = 5       # max exchanges kept in history (5 user + 5 assistant = 10 msgs)
 
+VOICES = {"fr": "ff_siwis", "en": "af_heart"}
+
+# French function words for language detection heuristic
+_FR_WORDS = {
+    "je", "tu", "il", "elle", "nous", "vous", "ils", "elles",
+    "le", "la", "les", "un", "une", "des", "du", "de", "d",
+    "et", "ou", "mais", "donc", "or", "ni", "car",
+    "est", "sont", "a", "ont", "être", "avoir",
+    "que", "qui", "quoi", "dont", "où",
+    "ce", "se", "me", "te", "lui", "leur",
+    "pas", "ne", "plus", "très", "bien", "tout",
+    "en", "au", "aux", "sur", "sous", "dans", "avec", "pour", "par",
+}
+
+_EN_WORDS = {
+    "i", "you", "he", "she", "we", "they",
+    "the", "a", "an", "is", "are", "was", "were", "be", "been",
+    "and", "or", "but", "so", "yet", "nor",
+    "it", "its", "this", "that", "these", "those",
+    "have", "has", "had", "do", "does", "did",
+    "will", "would", "can", "could", "should", "may", "might",
+    "not", "no", "very", "just", "all", "more",
+    "in", "on", "at", "to", "of", "for", "with", "by", "from",
+}
+
+
+def _detect_lang(text: str) -> str:
+    """Return 'fr' or 'en' based on function word frequency."""
+    words = text.lower().split()
+    fr_score = sum(1 for w in words if w.rstrip(".,!?;:") in _FR_WORDS)
+    en_score = sum(1 for w in words if w.rstrip(".,!?;:") in _EN_WORDS)
+    return "en" if en_score > fr_score else "fr"
+
 
 # ---------------------------------------------------------------------------
 # TTS
 # ---------------------------------------------------------------------------
 
-def synthesize(pipeline, text: str, log) -> tuple[float, float]:
-    """Kokoro synthesis. Returns (elapsed, audio_duration)."""
+def synthesize(pipelines: dict, text: str, log) -> tuple[float, float]:
+    """Kokoro synthesis with automatic FR/EN routing. Returns (elapsed, audio_duration)."""
+    lang     = _detect_lang(text)
+    pipeline = pipelines[lang]
+    voice    = VOICES[lang]
+    log.info(f"TTS lang={lang} voice={voice}")
+
     t0     = time.perf_counter()
     chunks = []
-    for _, _, audio in pipeline(text, voice="ff_siwis", speed=1.0):
+    for _, _, audio in pipeline(text, voice=voice, speed=1.0):
         chunks.append(audio)
     elapsed = time.perf_counter() - t0
 
@@ -61,15 +99,29 @@ def main():
     log = log_utils.setup("pipeline")
     os.makedirs(os.path.dirname(OUTPUT_WAV), exist_ok=True)
 
+    # ── Banner ───────────────────────────────────────────────────────────────
+    import datetime
+    started = datetime.datetime.now().strftime("%Y-%m-%d  %H:%M:%S")
+    print("\033[94m╔══════════════════════════════════════════════╗\033[0m")
+    print("\033[94m║          V O I C E L L M   P I P E L I N E  ║\033[0m")
+    print("\033[94m║   Parakeet 0.6B · Qwen3.5:4b · Kokoro-82M   ║\033[0m")
+    print(f"\033[94m║   Started : {started}             ║\033[0m")
+    print("\033[94m╚══════════════════════════════════════════════╝\033[0m")
+    print()
+
     # ── Load models ──────────────────────────────────────────────────────────
     log.info("=== VoiceLLM startup ===")
 
     log.info("[1/2] loading Parakeet TDT 0.6B-v3 …")
     stt_model = load_parakeet(log)
 
-    log.info("[2/2] loading Kokoro-82M …")
-    from kokoro import KPipeline
-    tts_pipeline = KPipeline(lang_code="f")
+    log.info("[2/2] loading Kokoro-82M (FR + EN, shared weights) …")
+    from kokoro import KPipeline, KModel
+    _kmodel = KModel()
+    pipelines = {
+        "fr": KPipeline(lang_code="f", model=_kmodel),
+        "en": KPipeline(lang_code="a", model=_kmodel),
+    }
     log.info("all models loaded — ready")
 
     # ── Push-to-talk loop ─────────────────────────────────────────────────────
@@ -112,7 +164,7 @@ def main():
             last_turn_time = time.perf_counter()
 
             # Stage 3 — TTS
-            tts_time, audio_dur = synthesize(tts_pipeline, clean_text, log)
+            tts_time, audio_dur = synthesize(pipelines, clean_text, log)
 
             total = time.perf_counter() - t_start
             log.info(
