@@ -27,7 +27,7 @@ OLLAMA_URL      = "http://localhost:11434/api/generate"
 OLLAMA_CHAT_URL = "http://localhost:11434/api/chat"
 MODEL             = "qwen3.5:4b"
 AVAILABLE_MODELS  = ["qwen3.5:2b", "qwen3.5:4b", "qwen3.5:9b"]
-THINK_MAX_TOKENS  = 1000  # cap total tokens (think + response) in think=ON mode
+THINK_MAX_TOKENS  = 1200  # cap total tokens (think + response) in think=ON mode
 
 _SYSTEM_PROMPT_TEMPLATE = """\
 You are a fully local voice assistant running on a Mac.
