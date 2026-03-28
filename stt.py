@@ -12,7 +12,6 @@ import argparse
 import logging
 import os
 import select
-import signal
 import sys
 import tempfile
 import time
@@ -126,26 +125,21 @@ def transcribe(model, audio: np.ndarray, log) -> tuple[str, float]:
 def _await_enter() -> None:
     """Block until Enter is pressed, reliably interruptible by Ctrl+C.
 
-    Replaces input() which can be swallowed by PortAudio's SIGINT handler
-    on macOS — PortAudio installs its own SIGINT handler at import time,
-    not only when a stream is active.
+    Uses select.select with a short timeout instead of input() so that
+    SIGINT is delivered between polls. The SIGINT handler is set once at
+    startup in pipeline.py — no save/restore needed here.
+
+    The 0.4s sleep before flushing covers stray Enter presses that arrive
+    while afplay is playing back a long audio clip.
     """
-    # Restore Python's default SIGINT so Ctrl+C always works.
-    old_handler = signal.signal(signal.SIGINT, signal.default_int_handler)
-    try:
-        # Small pause to let any in-flight keystrokes (e.g. Enter pressed
-        # during afplay playback) arrive in the stdin buffer before flushing.
-        time.sleep(0.15)
-        while select.select([sys.stdin], [], [], 0.0)[0]:
+    time.sleep(0.4)
+    while select.select([sys.stdin], [], [], 0.0)[0]:
+        sys.stdin.readline()
+    while True:
+        ready, _, _ = select.select([sys.stdin], [], [], 0.1)
+        if ready:
             sys.stdin.readline()
-        # Poll with a short timeout so SIGINT is delivered between iterations.
-        while True:
-            ready, _, _ = select.select([sys.stdin], [], [], 0.1)
-            if ready:
-                sys.stdin.readline()
-                return
-    finally:
-        signal.signal(signal.SIGINT, old_handler)
+            return
 
 
 def record_push_to_talk(log) -> np.ndarray:

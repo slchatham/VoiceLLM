@@ -11,8 +11,13 @@ Usage:
 
 import argparse
 import os
+import signal
 import subprocess
 import time
+
+# Override PortAudio's SIGINT handler permanently so Ctrl+C always works,
+# even when a sounddevice stream is active or being torn down.
+signal.signal(signal.SIGINT, signal.default_int_handler)
 
 import numpy as np
 import soundfile as sf
