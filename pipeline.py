@@ -5,7 +5,8 @@ All models loaded once at startup and kept in memory.
 
 Usage:
     python pipeline.py
-    python pipeline.py --no-play   # transcribe + LM only, no audio output
+    python pipeline.py --no-play          # transcribe + LM only, no audio output
+    python pipeline.py --model qwen3.5:9b
 """
 
 import argparse
@@ -18,7 +19,7 @@ import soundfile as sf
 
 import log_utils
 from stt import load_model as load_parakeet, transcribe, record_push_to_talk
-from lm  import ask
+from lm  import ask, AVAILABLE_MODELS, MODEL as DEFAULT_MODEL
 
 # ---------------------------------------------------------------------------
 # Config
@@ -94,6 +95,8 @@ def synthesize(pipelines: dict, text: str, log) -> tuple[float, float]:
 def main():
     parser = argparse.ArgumentParser(description="VoiceLLM pipeline")
     parser.add_argument("--no-play", action="store_true", help="Skip audio playback")
+    parser.add_argument("--model", default=DEFAULT_MODEL, choices=AVAILABLE_MODELS,
+                        help=f"Ollama model (default: {DEFAULT_MODEL})")
     args = parser.parse_args()
 
     log = log_utils.setup("pipeline")
@@ -104,7 +107,7 @@ def main():
     started = datetime.datetime.now().strftime("%Y-%m-%d  %H:%M:%S")
     print("\033[94m╔══════════════════════════════════════════════╗\033[0m")
     print("\033[94m║          V O I C E L L M   P I P E L I N E  ║\033[0m")
-    print("\033[94m║   Parakeet 0.6B · Qwen3.5:4b · Kokoro-82M   ║\033[0m")
+    print(f"\033[94m║   Parakeet 0.6B · {args.model:<10} · Kokoro-82M   ║\033[0m")
     print(f"\033[94m║   Started : {started}             ║\033[0m")
     print("\033[94m╚══════════════════════════════════════════════╝\033[0m")
     print()
@@ -156,7 +159,7 @@ def main():
                 continue
 
             # Stage 2 — LM (with context)
-            clean_text, lm_time = ask(raw_text, log, history=history)
+            clean_text, lm_time = ask(raw_text, log, history=history, model=args.model)
             if not clean_text.strip():
                 log.warning("empty LM response, skipped")
                 continue

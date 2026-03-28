@@ -1,11 +1,12 @@
 """
-Phase 2 — Ollama LM wrapper (qwen3.5:4b)
+Phase 2 — Ollama LM wrapper (qwen3.5:4b / 9b)
 raw_text → ollama HTTP API → clean_text
 
 Usage:
     python lm.py "j'ai demandé kelle heure il était"
     python lm.py --test
     python lm.py --wire "quelle heure il est"   # LM → TTS → plays audio
+    python lm.py --model qwen3.5:9b --test
 """
 
 import argparse
@@ -24,6 +25,7 @@ import log_utils
 OLLAMA_URL      = "http://localhost:11434/api/generate"
 OLLAMA_CHAT_URL = "http://localhost:11434/api/chat"
 MODEL           = "qwen3.5:4b"
+AVAILABLE_MODELS = ["qwen3.5:4b", "qwen3.5:9b"]
 
 SYSTEM_PROMPT = """\
 Tu es un assistant vocal local qui tourne hors-ligne sur un Mac.
@@ -96,13 +98,14 @@ class _ThinkFilter:
 # LM call
 # ---------------------------------------------------------------------------
 
-def ask(raw_text: str, log, history: list[dict] | None = None) -> tuple[str, float]:
+def ask(raw_text: str, log, history: list[dict] | None = None, model: str = MODEL) -> tuple[str, float]:
     """Send raw_text to the LM.
 
     history: list of {"role": "user"|"assistant", "content": "..."} messages.
              If provided, uses /api/chat to maintain conversation context.
              The new exchange (user + assistant) is appended to history in-place.
              If None, uses /api/generate (stateless).
+    model:   Ollama model name (default: MODULE-level MODEL constant).
 
     Returns (response, elapsed_seconds).
     """
@@ -121,9 +124,9 @@ def ask(raw_text: str, log, history: list[dict] | None = None) -> tuple[str, flo
                     + history
                     + [{"role": "user", "content": raw_text}]
                 )
-                log.debug(f"POST {OLLAMA_CHAT_URL} model={MODEL} messages={len(messages)}")
+                log.debug(f"POST {OLLAMA_CHAT_URL} model={model} messages={len(messages)}")
                 with cli.stream("POST", OLLAMA_CHAT_URL, json={
-                    "model":    MODEL,
+                    "model":    model,
                     "messages": messages,
                     "stream":   True,
                     "think":    False,
@@ -151,9 +154,9 @@ def ask(raw_text: str, log, history: list[dict] | None = None) -> tuple[str, flo
                         parts.append(tail)
             else:
                 # Stateless mode — /api/generate (used by --test and --wire)
-                log.debug(f"POST {OLLAMA_URL} model={MODEL}")
+                log.debug(f"POST {OLLAMA_URL} model={model}")
                 with cli.stream("POST", OLLAMA_URL, json={
-                    "model":  MODEL,
+                    "model":  model,
                     "prompt": raw_text,
                     "system": SYSTEM_PROMPT,
                     "stream": True,
@@ -249,17 +252,19 @@ def wire(raw_text: str):
 # ---------------------------------------------------------------------------
 
 def main():
-    parser = argparse.ArgumentParser(description=f"LM wrapper — {MODEL} via Ollama")
+    parser = argparse.ArgumentParser(description="LM wrapper via Ollama")
     parser.add_argument("text", nargs="?", help="Raw input text")
-    parser.add_argument("--test", action="store_true", help="Run test inputs")
-    parser.add_argument("--wire", action="store_true", help="LM → TTS → play audio")
+    parser.add_argument("--test",  action="store_true", help="Run test inputs")
+    parser.add_argument("--wire",  action="store_true", help="LM → TTS → play audio")
+    parser.add_argument("--model", default=MODEL, choices=AVAILABLE_MODELS,
+                        help=f"Ollama model (default: {MODEL})")
     args = parser.parse_args()
 
     if args.test:
         log = log_utils.setup("lm_test")
-        log.info(f"model: {MODEL}")
+        log.info(f"model: {args.model}")
         for raw in TEST_INPUTS:
-            text, elapsed = ask(raw, log)
+            text, elapsed = ask(raw, log, model=args.model)
             log.info(f"IN : {raw!r}")
             log.info(f"OUT: {text!r}  ({elapsed:.2f}s)")
         return
@@ -271,7 +276,7 @@ def main():
         wire(args.text)
     else:
         log = log_utils.setup("lm")
-        text, elapsed = ask(args.text, log)
+        text, elapsed = ask(args.text, log, model=args.model)
         print(text)
 
 
