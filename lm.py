@@ -28,9 +28,10 @@ OLLAMA_CHAT_URL = "http://localhost:11434/api/chat"
 MODEL           = "qwen3.5:4b"
 AVAILABLE_MODELS = ["qwen3.5:2b", "qwen3.5:4b", "qwen3.5:9b"]
 
-SYSTEM_PROMPT = """\
+_SYSTEM_PROMPT_TEMPLATE = """\
 Tu es un assistant vocal local qui tourne sur un Mac.
 Tu as accès à des outils de recherche web (DuckDuckGo) et Wikipedia pour les questions nécessitant des données récentes ou factuelles.
+La date d'aujourd'hui est le {date}.
 
 Règles absolues :
 - Réponds TOUJOURS dans la même langue que le message reçu. Si le message est en anglais, réponds en anglais. Si en français, en français. Ne traduis jamais.
@@ -38,9 +39,16 @@ Règles absolues :
 - Réponds en 2 phrases maximum. Sois naturel et direct.
 - Phrases déclaratives uniquement. Aucune ponctuation décorative.
 - Utilise les outils pour les actualités, prix, faits récents, biographies, ou toute donnée que tu ne connais pas avec certitude.
+- Pour tous les appels d'outils (web_search, wikipedia_lookup), formule TOUJOURS la requête en anglais — les résultats sont meilleurs. La réponse finale reste dans la langue de l'utilisateur.
 - Tu n'as pas accès à l'heure exacte ni à la localisation de l'utilisateur — dis-le honnêtement si demandé.
 - Si le texte contient des erreurs de transcription vocale évidentes, corrige-les discrètement sans le signaler.\
 """
+
+
+def _system_prompt() -> str:
+    import datetime
+    date = datetime.date.today().strftime("%d %B %Y")
+    return _SYSTEM_PROMPT_TEMPLATE.format(date=date)
 
 TEST_INPUTS = [
     "kelle heure il est",                          # FR avec erreur STT
@@ -122,7 +130,7 @@ def ask(raw_text: str, log, history: list[dict] | None = None, model: str = MODE
             if history is not None:
                 # Chat mode — full conversation context + tool calling
                 messages = (
-                    [{"role": "system", "content": SYSTEM_PROMPT}]
+                    [{"role": "system", "content": _system_prompt()}]
                     + history
                     + [{"role": "user", "content": raw_text}]
                 )
@@ -212,7 +220,7 @@ def ask(raw_text: str, log, history: list[dict] | None = None, model: str = MODE
                 with cli.stream("POST", OLLAMA_URL, json={
                     "model":  model,
                     "prompt": raw_text,
-                    "system": SYSTEM_PROMPT,
+                    "system": _system_prompt(),
                     "stream": True,
                     "think":  False,
                 }) as resp:
