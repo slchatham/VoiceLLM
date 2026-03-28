@@ -187,7 +187,7 @@ def main():
         except KeyboardInterrupt:
             log.info("interrupted — bye")
             print("\nBye.")
-            break
+            os._exit(0)  # skip MPS/NeMo destructor — avoids bus error on macOS
 
 
 if __name__ == "__main__":
