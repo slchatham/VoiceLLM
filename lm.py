@@ -26,7 +26,7 @@ import tools as _tools
 OLLAMA_URL      = "http://localhost:11434/api/generate"
 OLLAMA_CHAT_URL = "http://localhost:11434/api/chat"
 MODEL           = "qwen3.5:4b"
-AVAILABLE_MODELS = ["qwen3.5:4b", "qwen3.5:9b"]
+AVAILABLE_MODELS = ["qwen3.5:2b", "qwen3.5:4b", "qwen3.5:9b"]
 
 SYSTEM_PROMPT = """\
 Tu es un assistant vocal local qui tourne sur un Mac.
