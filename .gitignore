@@ -1,0 +1,44 @@
+# Generated audio
+output/
+
+# Logs
+logs/
+*.log
+
+# Speaker profiles (large binary JSON, user-specific)
+speakers/
+
+# Voice reference recordings (personal audio)
+voice_reference/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Model caches (downloaded at runtime)
+.cache/
+
+# Claude Code
+.claude/

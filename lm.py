@@ -1,0 +1,279 @@
+"""
+Phase 2 — Ollama LM wrapper (qwen3.5:4b)
+raw_text → ollama HTTP API → clean_text
+
+Usage:
+    python lm.py "j'ai demandé kelle heure il était"
+    python lm.py --test
+    python lm.py --wire "quelle heure il est"   # LM → TTS → plays audio
+"""
+
+import argparse
+import json
+import os
+import time
+
+import httpx
+
+import log_utils
+
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
+
+OLLAMA_URL      = "http://localhost:11434/api/generate"
+OLLAMA_CHAT_URL = "http://localhost:11434/api/chat"
+MODEL           = "qwen3.5:4b"
+
+SYSTEM_PROMPT = """\
+Tu es un assistant vocal local qui tourne hors-ligne sur un Mac.
+Tu n'as pas accès à internet, à l'heure, à la météo, ni à aucune donnée en temps réel.
+
+Règles absolues :
+- Réponds TOUJOURS dans la même langue que le message reçu. Si le message est en anglais, réponds en anglais. Si en français, en français. Ne traduis jamais.
+- Si le message mélange français et anglais, réponds en conservant ce mélange.
+- Réponds en 2 phrases maximum. Sois naturel et direct.
+- Phrases déclaratives uniquement. Aucune ponctuation décorative.
+- Tu n'as accès à aucune donnée en temps réel : heure, météo, actualités, prix, etc. Si on te demande ce type d'information, dis honnêtement que tu n'y as pas accès — dans la même langue que le message.
+- Si le texte contient des erreurs de transcription vocale évidentes, corrige-les discrètement sans le signaler.\
+"""
+
+TEST_INPUTS = [
+    "kelle heure il est",                          # FR avec erreur STT
+    "what's the weather like today",               # EN
+    "j'ai besoin d'aide pour my presentation",     # code-switché FR/EN
+    "dis moi un truc intéressant sur les pieuvres",
+]
+
+# ---------------------------------------------------------------------------
+# <think>…</think> filter  (Qwen3.5 reasoning tokens, safety net)
+# ---------------------------------------------------------------------------
+
+class _ThinkFilter:
+    _OPEN  = "<think>"
+    _CLOSE = "</think>"
+
+    def __init__(self) -> None:
+        self._buf = ""
+        self._in  = False
+
+    def feed(self, chunk: str) -> str:
+        self._buf += chunk
+        out: list[str] = []
+        while self._buf:
+            if self._in:
+                p = self._buf.find(self._CLOSE)
+                if p >= 0:
+                    self._buf = self._buf[p + len(self._CLOSE):]
+                    self._in  = False
+                else:
+                    self._buf = ""
+                    break
+            else:
+                p = self._buf.find(self._OPEN)
+                if p >= 0:
+                    out.append(self._buf[:p])
+                    self._buf = self._buf[p + len(self._OPEN):]
+                    self._in  = True
+                else:
+                    for i in range(1, len(self._OPEN)):
+                        if self._buf.endswith(self._OPEN[:i]):
+                            out.append(self._buf[:-i])
+                            self._buf = self._buf[-i:]
+                            break
+                    else:
+                        out.append(self._buf)
+                        self._buf = ""
+                    break
+        return "".join(out)
+
+    def flush(self) -> str:
+        val, self._buf = ("" if self._in else self._buf), ""
+        return val
+
+
+# ---------------------------------------------------------------------------
+# LM call
+# ---------------------------------------------------------------------------
+
+def ask(raw_text: str, log, history: list[dict] | None = None) -> tuple[str, float]:
+    """Send raw_text to the LM.
+
+    history: list of {"role": "user"|"assistant", "content": "..."} messages.
+             If provided, uses /api/chat to maintain conversation context.
+             The new exchange (user + assistant) is appended to history in-place.
+             If None, uses /api/generate (stateless).
+
+    Returns (response, elapsed_seconds).
+    """
+    log.info(f"LM input : {raw_text!r}  (context: {len(history)} msgs)" if history else f"LM input : {raw_text!r}")
+    t0  = time.perf_counter()
+    flt = _ThinkFilter()
+    parts: list[str] = []
+    first_token_logged = False
+
+    try:
+        with httpx.Client(timeout=60.0) as cli:
+            if history is not None:
+                # Chat mode — full conversation context
+                messages = (
+                    [{"role": "system", "content": SYSTEM_PROMPT}]
+                    + history
+                    + [{"role": "user", "content": raw_text}]
+                )
+                log.debug(f"POST {OLLAMA_CHAT_URL} model={MODEL} messages={len(messages)}")
+                with cli.stream("POST", OLLAMA_CHAT_URL, json={
+                    "model":    MODEL,
+                    "messages": messages,
+                    "stream":   True,
+                    "think":    False,
+                }) as resp:
+                    log.debug(f"HTTP {resp.status_code}")
+                    resp.raise_for_status()
+                    for line in resp.iter_lines():
+                        if not line:
+                            continue
+                        data  = json.loads(line)
+                        chunk = flt.feed(data.get("message", {}).get("content", ""))
+                        if chunk:
+                            if not first_token_logged:
+                                log.info(f"first token in {time.perf_counter() - t0:.2f}s")
+                                first_token_logged = True
+                            parts.append(chunk)
+                        if data.get("done"):
+                            eval_count    = data.get("eval_count", 0)
+                            eval_duration = data.get("eval_duration", 0) / 1e9
+                            load_duration = data.get("load_duration", 0) / 1e9
+                            log.info(f"done — load: {load_duration:.2f}s | eval: {eval_duration:.2f}s | {eval_count} tokens")
+                            break
+                    tail = flt.flush()
+                    if tail:
+                        parts.append(tail)
+            else:
+                # Stateless mode — /api/generate (used by --test and --wire)
+                log.debug(f"POST {OLLAMA_URL} model={MODEL}")
+                with cli.stream("POST", OLLAMA_URL, json={
+                    "model":  MODEL,
+                    "prompt": raw_text,
+                    "system": SYSTEM_PROMPT,
+                    "stream": True,
+                    "think":  False,
+                }) as resp:
+                    log.debug(f"HTTP {resp.status_code}")
+                    resp.raise_for_status()
+                    for line in resp.iter_lines():
+                        if not line:
+                            continue
+                        data  = json.loads(line)
+                        chunk = flt.feed(data.get("response", ""))
+                        if chunk:
+                            if not first_token_logged:
+                                log.info(f"first token in {time.perf_counter() - t0:.2f}s")
+                                first_token_logged = True
+                            parts.append(chunk)
+                        if data.get("done"):
+                            eval_count    = data.get("eval_count", 0)
+                            eval_duration = data.get("eval_duration", 0) / 1e9
+                            load_duration = data.get("load_duration", 0) / 1e9
+                            log.info(f"done — load: {load_duration:.2f}s | eval: {eval_duration:.2f}s | {eval_count} tokens")
+                            break
+                    tail = flt.flush()
+                    if tail:
+                        parts.append(tail)
+
+    except httpx.ConnectError:
+        log.error(f"cannot reach Ollama — is 'ollama serve' running?")
+        raise
+    except Exception as e:
+        log.error(f"{type(e).__name__}: {e}")
+        raise
+
+    elapsed = time.perf_counter() - t0
+    text    = "".join(parts).strip()
+    log.info(f"LM output: {text!r}  ({elapsed:.2f}s total)")
+
+    if history is not None:
+        history.append({"role": "user",      "content": raw_text})
+        history.append({"role": "assistant", "content": text})
+
+    return text, elapsed
+
+
+# ---------------------------------------------------------------------------
+# Wire: LM → TTS → audio
+# ---------------------------------------------------------------------------
+
+def wire(raw_text: str):
+    """LM → TTS → play. Measures each stage."""
+    import subprocess
+    import numpy as np
+    import soundfile as sf
+    from kokoro import KPipeline
+
+    log = log_utils.setup("wire")
+    log.info(f"=== wire start ===  input: {raw_text!r}")
+
+    # Stage 1: LM
+    clean_text, lm_time = ask(raw_text, log)
+    log.info(f"LM done in {lm_time:.2f}s → {clean_text!r}")
+
+    # Stage 2: TTS
+    log.info("loading Kokoro-82M …")
+    pipeline = KPipeline(lang_code="f")
+    log.info("model loaded")
+
+    out_path = os.path.join(os.path.dirname(__file__), "output", "wire_out.wav")
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+
+    log.info(f"TTS input: {clean_text!r}")
+    t0     = time.perf_counter()
+    chunks = []
+    for _, _, audio in pipeline(clean_text, voice="ff_siwis", speed=1.0):
+        chunks.append(audio)
+    tts_time = time.perf_counter() - t0
+
+    samples   = np.concatenate(chunks) if chunks else np.zeros(0, dtype=np.float32)
+    audio_dur = len(samples) / 24000
+    sf.write(out_path, samples, 24000)
+    log.info(f"TTS done in {tts_time:.2f}s — audio: {audio_dur:.2f}s — RTF: {tts_time/max(audio_dur,0.01):.1f}x")
+    log.info(f"saved → {out_path}")
+
+    total = lm_time + tts_time
+    log.info(f"=== wire total: {total:.2f}s  (LM {lm_time:.2f}s + TTS {tts_time:.2f}s) ===")
+
+    subprocess.run(["afplay", out_path], check=True)
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def main():
+    parser = argparse.ArgumentParser(description=f"LM wrapper — {MODEL} via Ollama")
+    parser.add_argument("text", nargs="?", help="Raw input text")
+    parser.add_argument("--test", action="store_true", help="Run test inputs")
+    parser.add_argument("--wire", action="store_true", help="LM → TTS → play audio")
+    args = parser.parse_args()
+
+    if args.test:
+        log = log_utils.setup("lm_test")
+        log.info(f"model: {MODEL}")
+        for raw in TEST_INPUTS:
+            text, elapsed = ask(raw, log)
+            log.info(f"IN : {raw!r}")
+            log.info(f"OUT: {text!r}  ({elapsed:.2f}s)")
+        return
+
+    if not args.text:
+        parser.error("provide a text argument or use --test / --wire")
+
+    if args.wire:
+        wire(args.text)
+    else:
+        log = log_utils.setup("lm")
+        text, elapsed = ask(args.text, log)
+        print(text)
+
+
+if __name__ == "__main__":
+    main()
