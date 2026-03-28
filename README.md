@@ -2,7 +2,7 @@
 
 Fully local, low-latency voice assistant running entirely on Apple Silicon (M3 Pro, 18 GB). No cloud, no API keys — web grounding optional via DuckDuckGo + Wikipedia.
 
-**Round-trip latency: ~4–6s** (warm, qwen3.5:4b, no tools) · **~8–10s** (with tool call)
+**Round-trip latency: ~4–6s** (warm, qwen3.5:4b, no tools) · **~8–10s** (with tool call) · **~15–30s** (`--think` mode)
 
 ---
 
@@ -20,7 +20,7 @@ flowchart TD
     MIC -->|"16kHz mono WAV"| STT
     STT -->|"raw transcript\n(FR/EN, may have errors)"| LM
     LM <-->|"tool calls\n(when needed)"| TOOLS
-    LM -->|"clean response\n2 phrases max"| TTS
+    LM -->|"clean response\n2 sentences max"| TTS
     TTS -->|"24kHz WAV"| SPK
 
     style MIC   fill:#1e1e2e,color:#cdd6f4,stroke:#585b70
@@ -54,10 +54,13 @@ flowchart TD
 - 🧠 **Conversation context** — 5-turn sliding window, auto-reset after 5 minutes
 - ⚡ **Fast** — all models loaded once at startup, kept in memory
 - 🌐 **Web grounding** — LM triggers DuckDuckGo / Wikipedia / yfinance tool calls autonomously when needed; +3–4s overhead, zero manual trigger
-- 📈 **Stock prices** — `get_stock_price(ticker, period)` via yfinance; real OHLCV data for 1d / 7d / 1mo / 3mo; LM resolves company → ticker (NVDA, MC.PA, etc.)
+- 📈 **Stock prices** — `get_stock_price(ticker, period)` via yfinance; real OHLCV data for 1d / 7d / 1mo / 3mo / 1y; LM resolves company → ticker (NVDA, MC.PA, etc.)
 - 🔒 **Fully offline by default** — tool calls are the only optional network path
 - 📋 **Timestamped logs** — every run logged to `logs/`
-- 🎛 **Selectable LM** — `--model qwen3.5:4b` (default) · `9b` (slower, higher quality) · `2b` (experimental, fast but hallucinates with tools)
+- 🎛 **Selectable LM** — `--model qwen3.5:4b` (default) · `9b` (slower, higher quality) · `2b` (experimental)
+- 🧩 **Reasoning mode** — `--think` enables Qwen3.5 chain-of-thought; better factual accuracy, capped at 600 tokens to prevent runaways
+- 📅 **Date-aware** — today's date injected into the system prompt at startup; no web search needed for temporal context
+- 🔍 **Reliable search** — DDG lite → html fallback on ratelimit; hoax/satire domains filtered; tool queries always in English for better coverage
 
 ---
 
@@ -79,7 +82,7 @@ cd VoiceLLM
 # Dependencies
 pip install kokoro soundfile sounddevice httpx
 pip install nemo_toolkit[asr]
-pip install duckduckgo-search wikipedia yfinance   # Phase 4 — web grounding + stock prices
+pip install duckduckgo-search wikipedia yfinance
 
 # Pull LM (4b — default)
 ollama pull qwen3.5:4b
@@ -99,10 +102,12 @@ ollama pull qwen3.5:2b   # experimental
 python pipeline.py                        # qwen3.5:4b (default)
 python pipeline.py --model qwen3.5:9b    # higher quality, ~10–25s round-trip
 python pipeline.py --model qwen3.5:2b    # experimental — fast but unreliable with tools
+python pipeline.py --think               # reasoning mode — better accuracy, ~15–30s
 python pipeline.py --no-play             # transcribe + LM only, no audio output
+python pipeline.py --help                # show all options
 ```
 
-Press **Enter** to start recording, **Enter** again to stop. The pipeline transcribes, generates a response, and plays it back.
+Press **Enter** to start recording, **Enter** again to stop. **Ctrl+C** to quit cleanly at any point.
 
 ### Individual components
 
@@ -132,7 +137,7 @@ VoiceLLM/
 ├── stt.py           # Parakeet STT wrapper
 ├── lm.py            # Ollama LM wrapper (stateless + chat history + tool calling)
 ├── tts.py           # Kokoro TTS wrapper
-├── tools.py         # DuckDuckGo + Wikipedia tool definitions and execution
+├── tools.py         # DuckDuckGo + Wikipedia + yfinance tool definitions and execution
 ├── log_utils.py     # shared timestamped logging
 ├── bench_mlx.py     # TTS backend benchmark (llama.cpp vs mlx-audio)
 └── CLAUDE.md        # architecture decisions and gotchas
@@ -150,6 +155,15 @@ VoiceLLM/
 | LM (Qwen3.5:4b) | 1.5–3.5s | depends on response length |
 | TTS (Kokoro) | 0.9–2.0s | RTF ~0.2x |
 | **Round-trip** | **~4–6s** | warm, short response |
+
+### qwen3.5:4b --think — quality mode
+
+| Stage | Typical | Notes |
+|-------|---------|-------|
+| STT (Parakeet) | 0.5–1.2s | unchanged |
+| LM (Qwen3.5:4b) | 10–25s | reasoning + response, capped at 600 tokens |
+| TTS (Kokoro) | 1.5–3.5s | longer responses |
+| **Round-trip** | **~15–30s** | not suitable for real-time |
 
 ### qwen3.5:9b — better quality, slower
 
@@ -178,6 +192,10 @@ Cold start (first run): +3–5s for Ollama model load.
 | 2b + tools viability | qwen3.5:2b with tools | **4b (default)** | 2b calls tools correctly but fails to synthesize results — hallucinates on top of correct search results. Fast (~1.4s LM) but unreliable. Left available as `--model qwen3.5:2b`. |
 | Stock price tool | DuckDuckGo snippets | **yfinance** | DDG returns stale financial news snippets with inconsistent numbers. yfinance gives real OHLCV data with accurate % change over any period. |
 | Ctrl+C exit crash | `break` → Python cleanup | **`os._exit(0)`** | NeMo/MPS tensors crash during Python destructor teardown on macOS. `os._exit(0)` skips destructors entirely — clean exit, no bus error. |
+| Ctrl+C not responding | `input()` | **`select.select` loop + `signal.default_int_handler`** | PortAudio installs its own SIGINT handler at import time, swallowing Ctrl+C even before a stream starts. Override installed once at pipeline startup before sounddevice import. |
+| DDG reliability | single backend (lite) | **lite → html fallback** | DDG lite endpoint ratelimits under moderate load. html backend is a reliable fallback with no added latency on success. |
+| Think mode runaways | unlimited `num_predict` | **`num_predict=600`** | Observed 1154-token / 60s generation on a simple factual query. 600 tokens covers ~400 thinking + ~150 response with room to spare. |
+| Tool query language | user language | **English only** | DDG and Wikipedia return significantly better results for English queries. Model translates back to user language in the final response. |
 
 ---
 
@@ -189,6 +207,7 @@ Cold start (first run): +3–5s for Ollama model load.
 - [x] Phase 3.5 — Dynamic FR/EN TTS routing (shared KModel)
 - [x] Phase 3.6 — Selectable LM (`--model qwen3.5:2b|4b|9b`)
 - [x] Phase 4 — Web grounding (DuckDuckGo + Wikipedia + yfinance via Ollama tool calling)
+- [x] Phase 4.1 — Reasoning mode (`--think`), date injection, English tool queries, DDG fallback + blocklist
 - [ ] Phase 5 — Dedicated weather tool (OpenWeatherMap or equivalent — DDG unreliable for real-time weather)
 
 ---
