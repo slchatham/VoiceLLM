@@ -13,7 +13,7 @@ flowchart TD
     MIC["🎙 Microphone\npush-to-talk"]
     STT["Parakeet TDT 0.6B-v3\nNeMo · MPS\nRTF 0.10–0.20x"]
     LM["Qwen3.5:4b (default)\nOllama · /api/chat\nconversation context + tools"]
-    TOOLS["DuckDuckGo · Wikipedia\nweb grounding (optional)"]
+    TOOLS["DuckDuckGo · Wikipedia · yfinance\nweb grounding (optional)"]
     TTS["Kokoro-82M\nff_siwis (FR) · af_heart (EN)\nRTF 0.19–0.22x"]
     SPK["🔊 Speaker\nafplay"]
 
