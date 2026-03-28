@@ -188,6 +188,9 @@ def main():
             log.info("interrupted — bye")
             print("\nBye.")
             os._exit(0)  # skip MPS/NeMo destructor — avoids bus error on macOS
+        except Exception as exc:
+            log.error(f"turn failed: {type(exc).__name__}: {exc}")
+            print("\033[91m⚠  Erreur — nouvelle tentative possible.\033[0m", flush=True)
 
 
 if __name__ == "__main__":
