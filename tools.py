@@ -87,6 +87,16 @@ DEFINITIONS = [
     }
 ]
 
+# Domains known to publish celebrity death hoaxes or satire as news.
+_BLOCKED_DOMAINS = {
+    "mediamass.net",
+    "huzlers.com",
+    "empirenews.net",
+    "thedailymash.co.uk",
+    "theonion.com",
+    "babylonbee.com",
+}
+
 # ---------------------------------------------------------------------------
 # Execution
 # ---------------------------------------------------------------------------
@@ -144,12 +154,21 @@ def _web_search(query: str, log) -> str:
     log.info(f"[tool] web_search({query!r})")
     try:
         from duckduckgo_search import DDGS
-        with DDGS() as ddgs:
-            results = list(ddgs.text(query, max_results=3))
+        results = None
+        for backend in ("lite", "html"):
+            try:
+                with DDGS() as ddgs:
+                    results = list(ddgs.text(query, max_results=3, backend=backend))
+                log.debug(f"web_search backend={backend} ok")
+                break
+            except Exception as e:
+                log.warning(f"web_search backend={backend} failed: {e} — trying next")
+        results = [r for r in results if not any(d in r["href"] for d in _BLOCKED_DOMAINS)]
         if not results:
             return "No search results found."
-        snippets = [f"{r['title']}: {r['body']}" for r in results]
-        return "\n\n".join(snippets)[:2000]
+        snippets = [f"{r['title']} [{r['href']}]: {r['body']}" for r in results]
+        disclaimer = "[Sources web — peuvent contenir des hoax ou informations non vérifiées. Rester critique.]\n\n"
+        return (disclaimer + "\n\n".join(snippets))[:2200]
     except Exception as exc:
         log.warning(f"web_search error: {exc}")
         return f"Search unavailable: {exc}"

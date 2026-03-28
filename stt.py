@@ -11,6 +11,9 @@ Usage:
 import argparse
 import logging
 import os
+import select
+import signal
+import sys
 import tempfile
 import time
 
@@ -120,15 +123,37 @@ def transcribe(model, audio: np.ndarray, log) -> tuple[str, float]:
 # Push-to-talk recording
 # ---------------------------------------------------------------------------
 
+def _await_enter() -> None:
+    """Block until Enter is pressed, reliably interruptible by Ctrl+C.
+
+    Replaces input() which can be swallowed by PortAudio's SIGINT handler
+    on macOS — PortAudio installs its own SIGINT handler at import time,
+    not only when a stream is active.
+    """
+    # Restore Python's default SIGINT so Ctrl+C always works.
+    old_handler = signal.signal(signal.SIGINT, signal.default_int_handler)
+    try:
+        # Small pause to let any in-flight keystrokes (e.g. Enter pressed
+        # during afplay playback) arrive in the stdin buffer before flushing.
+        time.sleep(0.15)
+        while select.select([sys.stdin], [], [], 0.0)[0]:
+            sys.stdin.readline()
+        # Poll with a short timeout so SIGINT is delivered between iterations.
+        while True:
+            ready, _, _ = select.select([sys.stdin], [], [], 0.1)
+            if ready:
+                sys.stdin.readline()
+                return
+    finally:
+        signal.signal(signal.SIGINT, old_handler)
+
+
 def record_push_to_talk(log) -> np.ndarray:
     """Record mic audio. Press Enter to start, Enter to stop."""
     print("\033[92m╔══════════════════════════════════════╗\033[0m", flush=True)
     print("\033[92m║   🎙  APPUYEZ SUR ENTRÉE POUR PARLER  ║\033[0m", flush=True)
     print("\033[92m╚══════════════════════════════════════╝\033[0m", flush=True)
-    try:
-        input()
-    except KeyboardInterrupt:
-        raise
+    _await_enter()
 
     frames     = []
     keep_going = [True]
@@ -146,7 +171,7 @@ def record_push_to_talk(log) -> np.ndarray:
     print("\033[91m╚══════════════════════════════════════╝\033[0m", flush=True)
     t0 = time.perf_counter()
     try:
-        input()
+        _await_enter()
     except KeyboardInterrupt:
         keep_going[0] = False
         stream.stop()

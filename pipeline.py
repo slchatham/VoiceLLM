@@ -93,10 +93,29 @@ def synthesize(pipelines: dict, text: str, log) -> tuple[float, float]:
 # ---------------------------------------------------------------------------
 
 def main():
-    parser = argparse.ArgumentParser(description="VoiceLLM pipeline")
-    parser.add_argument("--no-play", action="store_true", help="Skip audio playback")
+    parser = argparse.ArgumentParser(
+        description="VoiceLLM — fully local voice assistant (mic → STT → LM → TTS → speaker)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+examples:
+  python pipeline.py                        default — qwen3.5:4b, ~4-6s round-trip
+  python pipeline.py --model qwen3.5:9b     higher quality, ~10-25s round-trip
+  python pipeline.py --think                enable reasoning mode (+10-30s, better accuracy)
+  python pipeline.py --no-play              transcribe + LM only, no audio output
+  python pipeline.py --think --no-play      reasoning mode without audio (fastest for testing)
+
+push-to-talk:
+  Enter     start recording
+  Enter     stop recording and process
+  Ctrl+C    quit
+        """,
+    )
+    parser.add_argument("--no-play", action="store_true",
+                        help="skip audio playback (TTS still runs, WAV saved to output/)")
     parser.add_argument("--model", default=DEFAULT_MODEL, choices=AVAILABLE_MODELS,
-                        help=f"Ollama model (default: {DEFAULT_MODEL})")
+                        help=f"Ollama model to use (default: {DEFAULT_MODEL})")
+    parser.add_argument("--think", action="store_true",
+                        help="enable Qwen3.5 reasoning mode — slower but more accurate on factual queries")
     args = parser.parse_args()
 
     log = log_utils.setup("pipeline")
@@ -111,7 +130,10 @@ def main():
     def _row(s): return f"{_B}║{s:^{_W}}║{_R}"
     print(f"{_B}╔{'═'*_W}╗{_R}")
     print(_row("V O I C E L L M   P I P E L I N E"))
+    _think_label = "  [think=ON]" if args.think else ""
     print(_row(f"Parakeet 0.6B · {args.model} · Kokoro-82M"))
+    if args.think:
+        print(_row(_think_label))
     print(_row(f"Started : {started}"))
     print(f"{_B}╚{'═'*_W}╝{_R}")
     print()
@@ -163,7 +185,7 @@ def main():
                 continue
 
             # Stage 2 — LM (with context)
-            clean_text, lm_time = ask(raw_text, log, history=history, model=args.model)
+            clean_text, lm_time = ask(raw_text, log, history=history, model=args.model, think=args.think)
             if not clean_text.strip():
                 log.warning("empty LM response, skipped")
                 continue

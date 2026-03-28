@@ -100,7 +100,7 @@ class _ThinkFilter:
 # LM call
 # ---------------------------------------------------------------------------
 
-def ask(raw_text: str, log, history: list[dict] | None = None, model: str = MODEL) -> tuple[str, float]:
+def ask(raw_text: str, log, history: list[dict] | None = None, model: str = MODEL, think: bool = False) -> tuple[str, float]:
     """Send raw_text to the LM.
 
     history: list of {"role": "user"|"assistant", "content": "..."} messages.
@@ -135,7 +135,7 @@ def ask(raw_text: str, log, history: list[dict] | None = None, model: str = MODE
                     "messages": messages,
                     "tools":    _tools.DEFINITIONS,
                     "stream":   True,
-                    "think":    False,
+                    "think":    think,
                 }) as resp:
                     log.debug(f"HTTP {resp.status_code}")
                     resp.raise_for_status()
@@ -185,7 +185,7 @@ def ask(raw_text: str, log, history: list[dict] | None = None, model: str = MODE
                         "model":    model,
                         "messages": messages + tool_messages,
                         "stream":   True,
-                        "think":    False,
+                        "think":    think,
                     }) as resp2:
                         resp2.raise_for_status()
                         for line in resp2.iter_lines():
