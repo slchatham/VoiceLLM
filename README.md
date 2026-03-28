@@ -1,8 +1,8 @@
 # VoiceLLM
 
-Fully local, low-latency voice assistant running entirely on Apple Silicon (M3 Pro, 18 GB). No cloud, no API keys, no internet required.
+Fully local, low-latency voice assistant running entirely on Apple Silicon (M3 Pro, 18 GB). No cloud, no API keys — web grounding optional via DuckDuckGo + Wikipedia.
 
-**Round-trip latency: ~4–6s** (warm, qwen3.5:4b) — STT 0.5s · LM 3s · TTS 1s
+**Round-trip latency: ~4–6s** (warm, qwen3.5:4b, no tools) · **~8–10s** (with tool call)
 
 ---
 
@@ -12,20 +12,23 @@ Fully local, low-latency voice assistant running entirely on Apple Silicon (M3 P
 flowchart TD
     MIC["🎙 Microphone\npush-to-talk"]
     STT["Parakeet TDT 0.6B-v3\nNeMo · MPS\nRTF 0.10–0.20x"]
-    LM["Qwen3.5:4b or 9b\nOllama · /api/chat\nconversation context"]
+    LM["Qwen3.5:4b (default)\nOllama · /api/chat\nconversation context + tools"]
+    TOOLS["DuckDuckGo · Wikipedia\nweb grounding (optional)"]
     TTS["Kokoro-82M\nff_siwis (FR) · af_heart (EN)\nRTF 0.19–0.22x"]
     SPK["🔊 Speaker\nafplay"]
 
     MIC -->|"16kHz mono WAV"| STT
     STT -->|"raw transcript\n(FR/EN, may have errors)"| LM
+    LM <-->|"tool calls\n(when needed)"| TOOLS
     LM -->|"clean response\n2 phrases max"| TTS
     TTS -->|"24kHz WAV"| SPK
 
-    style MIC fill:#1e1e2e,color:#cdd6f4,stroke:#585b70
-    style STT fill:#313244,color:#cdd6f4,stroke:#585b70
-    style LM  fill:#313244,color:#cdd6f4,stroke:#585b70
-    style TTS fill:#313244,color:#cdd6f4,stroke:#585b70
-    style SPK fill:#1e1e2e,color:#cdd6f4,stroke:#585b70
+    style MIC   fill:#1e1e2e,color:#cdd6f4,stroke:#585b70
+    style STT   fill:#313244,color:#cdd6f4,stroke:#585b70
+    style LM    fill:#313244,color:#cdd6f4,stroke:#585b70
+    style TOOLS fill:#45475a,color:#cdd6f4,stroke:#585b70
+    style TTS   fill:#313244,color:#cdd6f4,stroke:#585b70
+    style SPK   fill:#1e1e2e,color:#cdd6f4,stroke:#585b70
 ```
 
 ---
@@ -36,7 +39,8 @@ flowchart TD
 |-----------|-------|---------|------|-----|
 | STT | [Parakeet TDT 0.6B-v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) | NeMo / MPS | ~0.9 GB | 0.10–0.20x |
 | LM | [Qwen3.5:4b](https://ollama.com/library/qwen3.5) *(default)* | Ollama | ~3.4 GB | — |
-| LM | [Qwen3.5:9b](https://ollama.com/library/qwen3.5) *(optional)* | Ollama | ~6.0 GB | — |
+| LM | [Qwen3.5:9b](https://ollama.com/library/qwen3.5) *(optional, slow)* | Ollama | ~6.0 GB | — |
+| LM | [Qwen3.5:2b](https://ollama.com/library/qwen3.5) *(experimental)* | Ollama | ~1.8 GB | — |
 | TTS | [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) | PyTorch / CPU | ~0.3 GB | 0.19–0.22x |
 | **Total (4b)** | | | **~4.6 GB** | |
 | **Total (9b)** | | | **~7.2 GB** | |
@@ -49,9 +53,10 @@ flowchart TD
 - 🗣 **Dynamic TTS voice routing** — `ff_siwis` for French responses, `af_heart` for English, detected automatically from LM output using a shared Kokoro model (weights loaded once)
 - 🧠 **Conversation context** — 5-turn sliding window, auto-reset after 5 minutes
 - ⚡ **Fast** — all models loaded once at startup, kept in memory
-- 🔒 **Fully offline** — zero network calls during inference
+- 🌐 **Web grounding** — LM triggers DuckDuckGo / Wikipedia tool calls autonomously when needed; +3–4s overhead, zero manual trigger
+- 🔒 **Fully offline by default** — tool calls are the only optional network path
 - 📋 **Timestamped logs** — every run logged to `logs/`
-- 🎛 **Selectable LM** — `--model qwen3.5:4b` (default, ~5s) or `--model qwen3.5:9b` (~10–25s, better quality)
+- 🎛 **Selectable LM** — `--model qwen3.5:4b` (default) · `9b` (slower, higher quality) · `2b` (experimental, fast but hallucinates with tools)
 
 ---
 
@@ -73,12 +78,14 @@ cd VoiceLLM
 # Dependencies
 pip install kokoro soundfile sounddevice httpx
 pip install nemo_toolkit[asr]
+pip install duckduckgo-search wikipedia   # Phase 4 — web grounding
 
 # Pull LM (4b — default)
 ollama pull qwen3.5:4b
 
-# Pull LM (9b — optional, higher quality, slower)
-ollama pull qwen3.5:9b
+# Pull LM (optional)
+ollama pull qwen3.5:9b   # higher quality, slower
+ollama pull qwen3.5:2b   # experimental
 ```
 
 ---
@@ -90,6 +97,7 @@ ollama pull qwen3.5:9b
 ```bash
 python pipeline.py                        # qwen3.5:4b (default)
 python pipeline.py --model qwen3.5:9b    # higher quality, ~10–25s round-trip
+python pipeline.py --model qwen3.5:2b    # experimental — fast but unreliable with tools
 python pipeline.py --no-play             # transcribe + LM only, no audio output
 ```
 
@@ -121,8 +129,9 @@ python stt.py --file audio.wav  # transcribe a file
 VoiceLLM/
 ├── pipeline.py      # full loop — mic → STT → LM → TTS → speaker
 ├── stt.py           # Parakeet STT wrapper
-├── lm.py            # Ollama LM wrapper (stateless + chat history)
+├── lm.py            # Ollama LM wrapper (stateless + chat history + tool calling)
 ├── tts.py           # Kokoro TTS wrapper
+├── tools.py         # DuckDuckGo + Wikipedia tool definitions and execution
 ├── log_utils.py     # shared timestamped logging
 ├── bench_mlx.py     # TTS backend benchmark (llama.cpp vs mlx-audio)
 └── CLAUDE.md        # architecture decisions and gotchas
@@ -164,6 +173,8 @@ Cold start (first run): +3–5s for Ollama model load.
 | LM API | `/api/generate` | **`/api/chat`** | `/api/generate` is stateless. `/api/chat` supports conversation history natively. |
 | TTS lang routing | single pipeline (FR only) | **dual pipeline, shared KModel** | `KPipeline.lang_code` is fixed at init. Sharing one `KModel` avoids loading weights twice. FR→`ff_siwis`, EN→`af_heart`, detected via function word heuristic. |
 | Default LM size | 9b | **4b** | 9b causes STT degradation (RTF 1.0x vs 0.1x) and 10–25s round-trips due to memory pressure. 4b hits the sweet spot at ~5s. |
+| Web grounding approach | prompt-flag `[SEARCH: ...]` | **Ollama tool calling** | Native function calling is cleaner — model decides autonomously, no regex parsing, no manual trigger heuristic. |
+| 2b + tools viability | qwen3.5:2b with tools | **4b (default)** | 2b calls tools correctly but fails to synthesize results — hallucinates on top of correct search results. Fast (~1.4s LM) but unreliable. Left available as `--model qwen3.5:2b`. |
 
 ---
 
@@ -173,8 +184,9 @@ Cold start (first run): +3–5s for Ollama model load.
 - [x] Phase 2 — LM integration (Qwen3.5:4b via Ollama)
 - [x] Phase 3 — STT integration (Parakeet TDT 0.6B-v3)
 - [x] Phase 3.5 — Dynamic FR/EN TTS routing (shared KModel)
-- [x] Phase 3.6 — Selectable LM (`--model qwen3.5:4b|9b`)
-- [ ] Phase 4 — Web grounding (DuckDuckGo + Wikipedia, no API key)
+- [x] Phase 3.6 — Selectable LM (`--model qwen3.5:2b|4b|9b`)
+- [x] Phase 4 — Web grounding (DuckDuckGo + Wikipedia via Ollama tool calling)
+- [ ] Phase 5 — Streaming TTS (pipe LM tokens → TTS as they arrive, reduce perceived latency)
 
 ---
 

@@ -17,6 +17,7 @@ import time
 import httpx
 
 import log_utils
+import tools as _tools
 
 # ---------------------------------------------------------------------------
 # Config
@@ -25,18 +26,19 @@ import log_utils
 OLLAMA_URL      = "http://localhost:11434/api/generate"
 OLLAMA_CHAT_URL = "http://localhost:11434/api/chat"
 MODEL           = "qwen3.5:4b"
-AVAILABLE_MODELS = ["qwen3.5:4b", "qwen3.5:9b"]
+AVAILABLE_MODELS = ["qwen3.5:2b", "qwen3.5:4b", "qwen3.5:9b"]
 
 SYSTEM_PROMPT = """\
-Tu es un assistant vocal local qui tourne hors-ligne sur un Mac.
-Tu n'as pas accès à internet, à l'heure, à la météo, ni à aucune donnée en temps réel.
+Tu es un assistant vocal local qui tourne sur un Mac.
+Tu as accès à des outils de recherche web (DuckDuckGo) et Wikipedia pour les questions nécessitant des données récentes ou factuelles.
 
 Règles absolues :
 - Réponds TOUJOURS dans la même langue que le message reçu. Si le message est en anglais, réponds en anglais. Si en français, en français. Ne traduis jamais.
 - Si le message mélange français et anglais, réponds en conservant ce mélange.
 - Réponds en 2 phrases maximum. Sois naturel et direct.
 - Phrases déclaratives uniquement. Aucune ponctuation décorative.
-- Tu n'as accès à aucune donnée en temps réel : heure, météo, actualités, prix, etc. Si on te demande ce type d'information, dis honnêtement que tu n'y as pas accès — dans la même langue que le message.
+- Utilise les outils pour les actualités, prix, faits récents, biographies, ou toute donnée que tu ne connais pas avec certitude.
+- Tu n'as pas accès à l'heure exacte ni à la localisation de l'utilisateur — dis-le honnêtement si demandé.
 - Si le texte contient des erreurs de transcription vocale évidentes, corrige-les discrètement sans le signaler.\
 """
 
@@ -118,16 +120,20 @@ def ask(raw_text: str, log, history: list[dict] | None = None, model: str = MODE
     try:
         with httpx.Client(timeout=60.0) as cli:
             if history is not None:
-                # Chat mode — full conversation context
+                # Chat mode — full conversation context + tool calling
                 messages = (
                     [{"role": "system", "content": SYSTEM_PROMPT}]
                     + history
                     + [{"role": "user", "content": raw_text}]
                 )
                 log.debug(f"POST {OLLAMA_CHAT_URL} model={model} messages={len(messages)}")
+
+                # ── First pass: stream, detect tool calls ────────────────────
+                tool_calls: list[dict] = []
                 with cli.stream("POST", OLLAMA_CHAT_URL, json={
                     "model":    model,
                     "messages": messages,
+                    "tools":    _tools.DEFINITIONS,
                     "stream":   True,
                     "think":    False,
                 }) as resp:
@@ -136,8 +142,12 @@ def ask(raw_text: str, log, history: list[dict] | None = None, model: str = MODE
                     for line in resp.iter_lines():
                         if not line:
                             continue
-                        data  = json.loads(line)
-                        chunk = flt.feed(data.get("message", {}).get("content", ""))
+                        data = json.loads(line)
+                        msg  = data.get("message", {})
+                        tcs  = msg.get("tool_calls")
+                        if tcs:
+                            tool_calls.extend(tcs)
+                        chunk = flt.feed(msg.get("content", "") or "")
                         if chunk:
                             if not first_token_logged:
                                 log.info(f"first token in {time.perf_counter() - t0:.2f}s")
@@ -152,6 +162,50 @@ def ask(raw_text: str, log, history: list[dict] | None = None, model: str = MODE
                     tail = flt.flush()
                     if tail:
                         parts.append(tail)
+
+                # ── Second pass: execute tools, get final response ───────────
+                if tool_calls:
+                    assistant_msg = {
+                        "role":       "assistant",
+                        "content":    "".join(parts).strip(),
+                        "tool_calls": tool_calls,
+                    }
+                    tool_messages = [assistant_msg]
+                    for tc in tool_calls:
+                        fn     = tc.get("function", {})
+                        result = _tools.execute(fn.get("name", ""), fn.get("arguments", {}), log)
+                        tool_messages.append({"role": "tool", "content": result})
+
+                    parts = []
+                    flt   = _ThinkFilter()
+                    first_token_logged = False
+
+                    log.debug(f"POST {OLLAMA_CHAT_URL} model={model} messages={len(messages)+len(tool_messages)} [after tools]")
+                    with cli.stream("POST", OLLAMA_CHAT_URL, json={
+                        "model":    model,
+                        "messages": messages + tool_messages,
+                        "stream":   True,
+                        "think":    False,
+                    }) as resp2:
+                        resp2.raise_for_status()
+                        for line in resp2.iter_lines():
+                            if not line:
+                                continue
+                            data  = json.loads(line)
+                            chunk = flt.feed(data.get("message", {}).get("content", "") or "")
+                            if chunk:
+                                if not first_token_logged:
+                                    log.info(f"first token (post-tool) in {time.perf_counter() - t0:.2f}s")
+                                    first_token_logged = True
+                                parts.append(chunk)
+                            if data.get("done"):
+                                eval_count    = data.get("eval_count", 0)
+                                eval_duration = data.get("eval_duration", 0) / 1e9
+                                log.info(f"done (post-tool) — eval: {eval_duration:.2f}s | {eval_count} tokens")
+                                break
+                        tail = flt.flush()
+                        if tail:
+                            parts.append(tail)
             else:
                 # Stateless mode — /api/generate (used by --test and --wire)
                 log.debug(f"POST {OLLAMA_URL} model={model}")
