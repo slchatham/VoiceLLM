@@ -1,6 +1,9 @@
 # Generated audio
 output/
 
+# Test cases and benchmarks
+test_cases/
+
 # Logs
 logs/
 *.log
