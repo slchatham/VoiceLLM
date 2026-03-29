@@ -146,16 +146,20 @@ push-to-talk:
     # ── Load models ──────────────────────────────────────────────────────────
     log.info("=== VoiceLLM startup ===")
 
-    log.info("[1/2] loading Parakeet TDT 0.6B-v3...")
+    log.info("[1/3] loading Parakeet TDT 0.6B-v3...")
     stt_model = load_parakeet(log)
 
-    log.info("[2/2] loading Kokoro-82M (FR + EN, shared weights)...")
+    log.info("[2/3] loading Kokoro-82M (FR + EN, shared weights)...")
     from kokoro import KPipeline, KModel
     _kmodel = KModel()
     pipelines = {
         "fr": KPipeline(lang_code="f", model=_kmodel),
         "en": KPipeline(lang_code="a", model=_kmodel),
     }
+
+    log.info("[3/3] warming up Ollama KV cache...")
+    _wh: list[dict] = []
+    ask(".", log, history=_wh, model=args.model, think=False, tools=[])
     log.info("all models loaded — ready")
 
     # ── Push-to-talk loop ─────────────────────────────────────────────────────

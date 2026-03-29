@@ -58,7 +58,7 @@ flowchart TD
 - 🔒 **Fully offline by default** — tool calls are the only optional network path
 - 📋 **Timestamped logs** — every run logged to `logs/`
 - 🎛 **Selectable LM** — `--model qwen3.5:4b` (default) · `9b` (slower, higher quality) · `2b` (experimental)
-- 🧩 **Reasoning mode** — `--think` enables Qwen3.5 chain-of-thought; better factual accuracy, capped at 600 tokens to prevent runaways
+- 🧩 **Reasoning mode** — `--think` enables Qwen3.5 chain-of-thought; better factual accuracy, capped at 1200 tokens to prevent runaways
 - 📅 **Date-aware** — today's date injected into the system prompt at startup; no web search needed for temporal context
 - 🔍 **Reliable search** — DDG lite → html fallback on ratelimit; hoax/satire domains filtered; tool queries always in English for better coverage
 
@@ -161,7 +161,7 @@ VoiceLLM/
 | Stage | Typical | Notes |
 |-------|---------|-------|
 | STT (Parakeet) | 0.5–1.2s | unchanged |
-| LM (Qwen3.5:4b) | 10–25s | reasoning + response, capped at 600 tokens |
+| LM (Qwen3.5:4b) | 10–25s | reasoning + response, capped at 1200 tokens |
 | TTS (Kokoro) | 1.5–3.5s | longer responses |
 | **Round-trip** | **~15–30s** | not suitable for real-time |
 
@@ -194,7 +194,7 @@ Cold start (first run): +3–5s for Ollama model load.
 | Ctrl+C exit crash | `break` → Python cleanup | **`os._exit(0)`** | NeMo/MPS tensors crash during Python destructor teardown on macOS. `os._exit(0)` skips destructors entirely — clean exit, no bus error. |
 | Ctrl+C not responding | `input()` | **`select.select` loop + `signal.default_int_handler`** | PortAudio installs its own SIGINT handler at import time, swallowing Ctrl+C even before a stream starts. Override installed once at pipeline startup before sounddevice import. |
 | DDG reliability | single backend (lite) | **lite → html fallback** | DDG lite endpoint ratelimits under moderate load. html backend is a reliable fallback with no added latency on success. |
-| Think mode runaways | unlimited `num_predict` | **`num_predict=600`** | Observed 1154-token / 60s generation on a simple factual query. 600 tokens covers ~400 thinking + ~150 response with room to spare. |
+| Think mode runaways | `num_predict=600` | **`num_predict=1200`** | 600 tokens was too tight — complex queries (e.g. dual stock comparison) exhausted the budget on reasoning with no tokens left for the response. 1200 covers ~900 thinking + ~300 response comfortably. |
 | Tool query language | user language | **English only** | DDG and Wikipedia return significantly better results for English queries. Model translates back to user language in the final response. |
 
 ---

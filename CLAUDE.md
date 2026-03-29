@@ -89,34 +89,72 @@ Each block is developed and validated in isolation before integration.
 
 ---
 
-## 6. Phase 4 — Web grounding (planned)
+## 6. Phase 4 — Web grounding ✅
 
 **Goal**: give the LM access to real-time factual data for queries it cannot answer locally (current events, people, dates, prices, etc.).
 
-**Motivation**: Qwen3.5:4b hallucinate on recent facts without grounding (observed: Macron/Brune Payer, timestamps, current events).
+**Result**: Ollama native tool calling — `web_search` (DuckDuckGo lite→html fallback), `wikipedia_lookup`, `get_stock_price` (yfinance). LM triggers tools autonomously. Domain blocklist for hoax/satire sites. Tool queries always in English for better coverage. DDG ratelimit handled via lite→html fallback. `num_predict=1200` cap on think mode to prevent runaways.
 
-**Approach**:
-- Tools: `duckduckgo-search` + `wikipedia-api` — free, no API key required
-- Trigger: LM decides itself if a search is needed via a flag in the system prompt — no function calling framework
-- Injection: search results injected into the `/api/chat` messages array as a `system` message before the final response turn
-- Estimated additional latency: +1–2s per round-trip when search is triggered
-
-**Limitations to document**:
-- Search adds latency — only trigger when necessary
-- DuckDuckGo results may be stale or irrelevant; inject with a disclaimer in the prompt
-- Wikipedia snippets are truncated — do not exceed context budget
-
-### Tasks
-- [ ] Install `duckduckgo-search` and `wikipedia-api`
-- [ ] Define trigger heuristic in system prompt (e.g. "if you need current data, output `[SEARCH: query]` on the first line")
-- [ ] Parse LM first-pass output for `[SEARCH: ...]` flag
-- [ ] Fetch and truncate results
-- [ ] Re-inject as context and get final response
-- [ ] Measure latency overhead
+### Go / No-Go — PASSED
+- Tool calls triggered autonomously, correct results ✓
+- DDG fallback working, +1.5s overhead on ratelimit ✓
+- Stock prices: real OHLCV data, parallel tool calls (TSLA + NVDA in one pass) ✓
+- Round-trip with tools: ~8–12s warm ✓
 
 ---
 
-## 7. Known Quirks & Gotchas
+## 7. Phase 5 — RAG Local (ready to implement)
+
+**Goal**: allow the LM to query structured local files (spreadsheets, CSV) via a `query_collection` tool.
+
+**Branch**: `feature/rag-collection`
+
+**Architecture**:
+- `documents/` — input folder, scanned at startup
+- `index_documents.py` — standalone indexer, MD5 hash to skip unchanged files, each file becomes a SQLite table named after the filename
+- `tools/rag.py` — the tool: Qwen generates SQL from question + injected schema, executes on `collection.db`, returns formatted result
+- Schema injection format: table list + column names + types + 3 example values per table — enough context for a 4b to write correct SQL
+- `lm.py`: add `query_collection` to `tools.DEFINITIONS`, same pattern as existing tools
+
+**Formats supported**: `.xlsx`, `.xls`, `.csv`
+
+**Validated test case**: board game collection (380 entries) — "quels jeux je n'ai pas joués ?", "combien dépensé chez Philibert ?", "jeux de Reiner Knizia que j'ai ?"
+
+**Key constraint**: inject the full list of available tables (not just the queried one) so the LM can choose the right table or JOIN across files.
+
+**New dependency**: `openpyxl` (xlsx read), `pandas` (CSV/XLS → SQLite ingestion)
+
+---
+
+## 8. Phase 6 — Dynamic Persona Detection (architecture decided)
+
+**Goal**: adapt the system prompt in real time based on detected conversation domain — cybersecurity architect, financial advisor, business coach, etc.
+
+**Key architectural constraint**: changing the system prompt invalidates Ollama's KV cache prefix, costing ~3–5s re-warm on the first turn after a switch. To preserve the cache, **persona is injected as a hint prefix in the user message**, not as a system prompt replacement:
+```python
+augmented = f"[mode: {persona}]\n{user_message}"
+```
+
+**Detection**: embeddings (nomic-embed-text via Ollama, ~0.3 GB) + cosine similarity to pre-computed persona centroid vectors. Cost: <100ms, zero tokens consumed. Centroid vectors pre-computed at startup from descriptive text for each tag.
+
+**Switch policy**: detect every turn, but only switch if the new persona is stable for 2 consecutive turns — avoids oscillation on ambiguous questions.
+
+**Persona mode**: mono-persona dominant (no stacking — system prompt inflation not worth it for a 4b).
+
+**Persona tags**: `cybersecurity_architect`, `financial_advisor`, `business_coach`, `lifestyle_casual`, `board_game_expert`, `technical_developer`, `health_wellness`, `general_assistant`
+
+**CLI**:
+```
+--persona auto    # dynamic detection (default)
+--persona fixed   # static system prompt (current behavior)
+--persona <tag>   # force a specific persona
+```
+
+**New dependency**: `nomic-embed-text` pulled in Ollama (or `mxbai-embed-large`), no pip package needed
+
+---
+
+## 9. Known Quirks & Gotchas
 
 ### Kokoro
 - **Replaces OuteTTS as the primary TTS** — OuteTTS was stochastic (bad output ~50% of the time on M3 Pro). Kokoro is deterministic, RTF 0.19–0.21x, empirically validated.
@@ -140,12 +178,15 @@ Each block is developed and validated in isolation before integration.
 - Test each phase independently with `--test` flag before full pipeline run.
 - **Ctrl+C exit**: use `os._exit(0)` instead of `break` in the main loop — NeMo/MPS tensors crash during Python destructor teardown on macOS. `os._exit(0)` skips destructors entirely.
 - **Tool calling**: `lm.py ask()` passes `tools.DEFINITIONS` on every `/api/chat` call. If `message.tool_calls` is present in the stream, tools are executed and a second streaming call is made. Tool internals (calls + results) are NOT added to the sliding history — only the final user/assistant exchange.
+- **Warmup call**: `pipeline.py` makes a `ask(".", ..., tools=[])` call at startup (after model load) to prime Ollama's KV cache for the system prompt. `tools=[]` prevents the model from triggering a spurious tool call on the warmup message. Cost: ~5s at startup, saves ~7–9s on the first real turn.
+- **KV cache and persona switching**: changing the system prompt between turns invalidates Ollama's prefix cache. Any dynamic persona feature must inject persona context into the user message, not the system prompt.
 - **web_search is unreliable for real-time weather** — DDG returns news snippets, not live data. Abstain or add a dedicated weather API tool.
 - **European stock tickers** need a market suffix: `AXA.PA`, `MC.PA` (Euronext Paris), `SAP.DE` (Xetra). The LM knows the major ones but may miss smaller caps.
+- **Parakeet hallucination on noisy audio** — on poor mic input, Parakeet may generate fluent text in an unexpected language (observed: Russian). The LM will respond in that language (correct per language rules). No fix in current code — user must re-speak clearly.
 
 ---
 
-## 8. Stack & Dependencies
+## 10. Stack & Dependencies
 
 ```
 kokoro                # TTS — Kokoro-82M, French voice ff_siwis
@@ -169,31 +210,42 @@ pip install httpx
 # Phase 3
 pip install nemo_toolkit[asr]
 
-# Phase 4 (planned)
-pip install duckduckgo-search wikipedia-api
+# Phase 4
+pip install duckduckgo-search wikipedia yfinance
+
+# Phase 5 (planned)
+pip install openpyxl pandas
+
+# Phase 6 (planned)
+ollama pull nomic-embed-text
 ```
 
 ---
 
-## 9. File Structure
+## 11. File Structure
 
 ```
 VoiceLLM/
 ├── CLAUDE.md              # this file
+├── pipeline.py            # full loop — mic → STT → LM → TTS → speaker
+├── stt.py                 # Phase 3 — Parakeet STT wrapper
+├── lm.py                  # Phase 2 — Ollama wrapper (stateless + chat history + tool calling)
 ├── tts.py                 # Phase 1 — Kokoro TTS wrapper
-├── lm.py                  # Phase 2 — Ollama wrapper (stateless + chat history)
-├── stt.py                 # Phase 3 — Parakeet wrapper
-├── pipeline.py            # full loop orchestration (Phases 1–3)
-├── log_utils.py           # shared logging setup
+├── tools.py               # Phase 4 — DuckDuckGo + Wikipedia + yfinance tools
+├── log_utils.py           # shared timestamped logging
+├── bench_mlx.py           # TTS backend benchmark (kept for reference)
+├── documents/             # Phase 5 — input files for RAG (xlsx, csv) [planned]
+├── index_documents.py     # Phase 5 — file indexer → SQLite [planned]
+├── tools/
+│   └── rag.py             # Phase 5 — query_collection tool [planned]
 ├── speakers/              # OuteTTS speaker profiles (kept for reference)
 │   └── fr_voice.json
-├── voice_reference/       # source audio for speaker cloning
 └── output/                # generated WAV files (gitignored)
 ```
 
 ---
 
-## 10. What We Are NOT Doing (for now)
+## 12. What We Are NOT Doing (for now)
 
 - **No UI** — CLI only until all phases validate
 - **No streaming TTS** — full LM response collected before TTS starts (simplicity first)

@@ -111,7 +111,7 @@ class _ThinkFilter:
 # LM call
 # ---------------------------------------------------------------------------
 
-def ask(raw_text: str, log, history: list[dict] | None = None, model: str = MODEL, think: bool = False) -> tuple[str, float]:
+def ask(raw_text: str, log, history: list[dict] | None = None, model: str = MODEL, think: bool = False, tools: list | None = None) -> tuple[str, float]:
     """Send raw_text to the LM.
 
     history: list of {"role": "user"|"assistant", "content": "..."} messages.
@@ -140,11 +140,12 @@ def ask(raw_text: str, log, history: list[dict] | None = None, model: str = MODE
                 log.debug(f"POST {OLLAMA_CHAT_URL} model={model} messages={len(messages)}")
 
                 # ── First pass: stream, detect tool calls ────────────────────
+                _tools_def = _tools.DEFINITIONS if tools is None else tools
                 tool_calls: list[dict] = []
                 with cli.stream("POST", OLLAMA_CHAT_URL, json={
                     "model":    model,
                     "messages": messages,
-                    "tools":    _tools.DEFINITIONS,
+                    "tools":    _tools_def,
                     "stream":   True,
                     "think":    think,
                     **({"options": {"num_predict": THINK_MAX_TOKENS}} if think else {}),
